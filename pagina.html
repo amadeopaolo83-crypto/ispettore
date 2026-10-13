@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PitIspettore</title>
+<style>
+  :root{--bg:#0B0D0F;--panel:#14171A;--panel2:#1C2024;--line:#262B30;--text:#E9EDEF;--muted:#8A9199;--y:#F5C518;--g:#3ECF6E;--r:#E63946;}
+  *{box-sizing:border-box;}
+  body{margin:0;padding:16px;background:var(--bg);color:var(--text);font-family:system-ui,sans-serif;font-size:15px;}
+  h1{font-size:20px;margin:0 0 4px;} .m{color:var(--muted);font-size:13px;margin:0 0 14px;}
+  label{display:block;font-size:12px;color:var(--muted);margin:12px 0 4px;text-transform:uppercase;letter-spacing:.06em;}
+  input,select{width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:10px;font-size:15px;}
+  .riga{display:flex;gap:8px;} .riga>*{flex:1;}
+  button{background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:12px;font-size:15px;}
+  button.p{background:var(--y);color:#0B0D0F;border-color:var(--y);font-weight:700;width:100%;margin-top:14px;}
+  button.c{background:var(--g);color:#0B0D0F;border-color:var(--g);font-weight:700;width:100%;margin:12px 0;}
+  #stato{margin:12px 0 0;font-size:13px;color:var(--muted);} .no{color:var(--r);} .ok{color:var(--g);}
+  details{background:var(--panel);border:1px solid var(--line);border-radius:10px;margin:10px 0;padding:0 12px;}
+  summary{padding:12px 0;font-weight:600;font-size:14px;}
+  pre{background:#0f1214;border:1px solid var(--line);border-radius:8px;padding:8px;overflow:auto;max-height:45vh;font-size:11.5px;white-space:pre-wrap;word-break:break-word;margin:6px 0 10px;}
+  .voce{border-top:1px solid var(--line);padding:8px 0;font-size:13px;word-break:break-all;}
+  .voce b{color:var(--y);} .t{color:var(--muted);font-size:12px;}
+  img.sh{width:100%;border:1px solid var(--line);border-radius:10px;margin-top:12px;}
+  .chip{display:inline-block;background:var(--panel2);border:1px solid var(--line);border-radius:20px;padding:4px 10px;font-size:12px;margin:0 6px 6px 0;}
+</style>
+</head>
+<body>
+<h1>PitIspettore</h1>
+<p class="m">Browser per sviluppatori in cloud: incolla l'indirizzo di una pagina e vedi cosa carica, come gli strumenti da sviluppatore ma da telefono.</p>
+
+<label for="token">Token</label>
+<input id="token" type="password" autocomplete="off" placeholder="ISPETTORE_TOKEN (o BRIDGE_TOKEN)">
+<label for="url">Indirizzo della pagina</label>
+<input id="url" type="url" autocomplete="off" autocapitalize="off" placeholder="https://www.livetiming.ficr.it/cronotreviso/">
+<div class="riga">
+  <div><label for="sec">Quanto lasciarla girare</label>
+    <select id="sec"><option value="10">10 secondi</option><option value="15" selected>15 secondi</option><option value="25">25 secondi</option><option value="40">40 secondi</option></select></div>
+  <div><label for="vista">Vista</label>
+    <select id="vista"><option value="desktop" selected>Computer</option><option value="mobile">Telefono</option></select></div>
+</div>
+<button class="p" id="vai" onclick="ispeziona()">Ispeziona</button>
+<p id="stato"></p>
+
+<div id="esito" hidden>
+  <button class="c" onclick="copia()">Copia il rapporto per Claude</button>
+  <div id="chips"></div>
+  <img id="shot" class="sh" alt="" hidden>
+  <details open><summary>Testo visibile sulla pagina</summary><pre id="vis"></pre></details>
+  <details open><summary id="sumCand">Candidati dati</summary><div id="cand"></div></details>
+  <details><summary id="sumWs">WebSocket</summary><div id="ws"></div></details>
+  <details><summary id="sumScr">Indirizzi trovati negli script</summary><pre id="scr"></pre></details>
+  <details><summary id="sumReq">Tutte le richieste</summary><div id="req"></div></details>
+  <details><summary>Console della pagina</summary><pre id="con"></pre></details>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const sale = (k) => { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } };
+const salva = (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} };
+$('token').value = sale('pi_token'); $('url').value = sale('pi_url');
+if (sale('pi_sec')) $('sec').value = sale('pi_sec');
+if (sale('pi_vista')) $('vista').value = sale('pi_vista');
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+let ultimo = null, orologio = null;
+
+async function ispeziona() {
+  const t = $('token').value.trim(), u = $('url').value.trim();
+  if (!u) { $('stato').innerHTML = '<span class="no">Incolla prima l\'indirizzo.</span>'; return; }
+  salva('pi_token', t); salva('pi_url', u); salva('pi_sec', $('sec').value); salva('pi_vista', $('vista').value);
+  $('vai').disabled = true; $('esito').hidden = true;
+  const inizio = Date.now();
+  clearInterval(orologio);
+  orologio = setInterval(() => { $('stato').textContent = 'In corso da ' + Math.round((Date.now() - inizio) / 1000) + ' s (se il servizio dormiva può servire un minuto in più)…'; }, 500);
+  try {
+    const q = new URLSearchParams({ url: u, secondi: $('sec').value, vista: $('vista').value });
+    const r = await fetch('/api/ispeziona?' + q, { headers: t ? { Authorization: 'Bearer ' + t } : {} });
+    const d = await r.json();
+    clearInterval(orologio);
+    if (!d.ok) { $('stato').innerHTML = '<span class="no">' + esc(d.messaggio || 'errore') + '</span>'; return; }
+    ultimo = d; mostra(d);
+    $('stato').innerHTML = '<span class="ok">Fatto in ' + Math.round(d.durataMs / 1000) + ' s.</span>';
+  } catch (e) {
+    clearInterval(orologio); $('stato').innerHTML = '<span class="no">Errore: ' + esc(e.message) + '</span>';
+  } finally { $('vai').disabled = false; }
+}
+
+function mostra(d) {
+  $('esito').hidden = false;
+  $('chips').innerHTML = [
+    d.totaleRichieste + ' richieste', d.candidati.length + ' candidati dati', d.websocket.length + ' websocket',
+    d.righeTabella + ' righe di tabella', d.pagina.caricata ? 'pagina caricata' : 'pagina NON finita di caricare',
+    d.bloccate ? d.bloccate + ' bloccate' : ''
+  ].filter(Boolean).map((x) => '<span class="chip">' + esc(x) + '</span>').join('');
+  if (d.schermata) { $('shot').src = 'data:image/jpeg;base64,' + d.schermata; $('shot').hidden = false; } else { $('shot').hidden = true; }
+  $('vis').textContent = d.testoVisibile || '(vuota)';
+  $('sumCand').textContent = 'Candidati dati (' + d.candidati.length + ')';
+  $('cand').innerHTML = d.candidati.length ? d.candidati.map((c, i) =>
+    '<div class="voce"><b>[' + (i + 1) + '] ' + esc(c.richiesta) + '</b><div class="t">' + c.volte + ' volte' +
+    (c.ogniSecondi != null ? ', ogni ~' + c.ogniSecondi + ' s' : '') + ' · stato ' + esc(c.stato) + ' · ' + esc(c.mime || '?') +
+    '</div><div class="t">' + esc(c.url) + '</div>' + (c.esempio ? '<pre>' + esc(c.esempio) + '</pre>' : '') + '</div>').join('')
+    : '<div class="voce t">Nessuna richiesta sembra portare dati. Prova ad aumentare i secondi o a cambiare vista.</div>';
+  $('sumWs').textContent = 'WebSocket (' + d.websocket.length + ')';
+  $('ws').innerHTML = d.websocket.length ? d.websocket.map((s) =>
+    '<div class="voce"><b>' + esc(s.url) + '</b><div class="t">ricevuti ' + s.ricevuti + ', inviati ' + s.inviati + '</div><pre>' +
+    esc(s.frame.slice(0, 6).map((f) => f.dir + ' ' + f.dati).join('\n')) + '</pre></div>').join('') : '<div class="voce t">Nessuno.</div>';
+  $('sumScr').textContent = 'Indirizzi trovati negli script (' + d.indirizziNeiScript.length + ')';
+  $('scr').textContent = d.indirizziNeiScript.join('\n') || '(nessuno)';
+  $('sumReq').textContent = 'Tutte le richieste (' + d.totaleRichieste + ')';
+  $('req').innerHTML = d.richieste.map((q) =>
+    '<div class="voce"><b>' + esc(q.metodo) + '</b> ' + esc(q.tipo) + ' · ' + esc(q.stato == null ? '-' : q.stato) +
+    '<div class="t">' + esc(q.url) + (q.errore ? ' [' + esc(q.errore) + ']' : '') + '</div></div>').join('');
+  $('con').textContent = d.console.join('\n') || '(niente)';
+}
+
+async function copia() {
+  if (!ultimo) return;
+  try { await navigator.clipboard.writeText(ultimo.testo); $('stato').innerHTML = '<span class="ok">Copiato: incollalo nella chat.</span>'; }
+  catch (e) {
+    // senza permesso agli appunti si mostra il testo da selezionare a mano
+    $('vis').textContent = ultimo.testo; $('stato').textContent = 'Copia non riuscita: tieni premuto sul testo qui sotto e copialo a mano.';
+  }
+}
+</script>
+</body>
+</html>

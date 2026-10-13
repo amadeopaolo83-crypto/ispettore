@@ -1,0 +1,15 @@
+{
+  "name": "pit-ispettore",
+  "version": "1.0.0",
+  "description": "Browser per sviluppatori in cloud, pensato per il telefono: mostra le richieste di rete di una pagina di live timing",
+  "main": "server.js",
+  "engines": {
+    "node": ">=22 <25"
+  },
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@sparticuz/chromium": "^138.0.2"
+  }
+}
